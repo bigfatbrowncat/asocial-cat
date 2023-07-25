@@ -1,10 +1,10 @@
-import _pt from "./prop-types.js";
+import _pt from "../../es-react/dev/prop-types.js";
 
 function _inheritsLoose(subClass, superClass) { subClass.prototype = Object.create(superClass.prototype); subClass.prototype.constructor = subClass; subClass.__proto__ = superClass; }
 
 function _defineProperty(obj, key, value) { if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
 
-import React from './react.js';
+import React from '../../es-react/dev/react.js';
 
 var Element = function (_React$PureComponent) {
   _inheritsLoose(Element, _React$PureComponent);

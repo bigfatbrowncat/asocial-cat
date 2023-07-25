@@ -4,8 +4,8 @@ function _objectWithoutPropertiesLoose(source, excluded) { if (source == null) r
 
 function _defineProperty(obj, key, value) { if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
 
-import React from './react.js';
-import escapeHtml from './escape-html';
+import React from '../../es-react/dev/react.js';
+import escapeHtml from '../../escape-html';
 import Element from './Element.js';
 import StyleFilter from './StyleFilter.js';
 import { FILTER_DENY, FILTER_CAST_NUMBER, FILTER_CAST_BOOL, FILTER_NO_CAST, TAGS, BANNED_TAG_LIST, ALLOWED_TAG_LIST, ATTRIBUTES, ATTRIBUTES_TO_PROPS } from './constants.js';

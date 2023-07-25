@@ -19,11 +19,11 @@
 
     window.process = { env: { NODE_ENV: "production" } };
 
-    import React from "./react.js";
-    import ReactDOM from "./react-dom.js";
+    import React from "./es-react/dev/react.js";
+    import ReactDOM from "./es-react/dev/react-dom.js";
 //    import ReactDOMServer from "https://unpkg.com/es-react@latest/react-dom-server-browser.js";
-    import PropTypes from "./prop-types.js";
-    import Markup from "./Markup.js";
+    import PropTypes from "./es-react/dev/prop-types.js";
+    import Markup from "./interweave/esm/Markup.js";
     import htm from "https://unpkg.com/htm@latest?module";
 
     const html = htm.bind(React.createElement);
