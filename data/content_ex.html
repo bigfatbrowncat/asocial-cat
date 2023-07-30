@@ -1,0 +1,24 @@
+<html lang="en" xmlns:server="unspecified">
+<head>
+  <meta charset="UTF-8" />
+  <title>Title</title>
+  <style>
+      server\:content {
+          background-color: #fff5e7;
+      }
+      server\:allow {
+          background-color: #ffe0d3;
+      }
+  </style>
+</head>
+<body>
+<!--
+    The code outside the server:content tag is just
+    a boilerplate used to render this page in browser while editing
+-->
+<server:content>
+  This is some content <em>that <b>will</b> be rendered</em> inside the browser.
+  <server:allow users="ilya , irene">This text is <qweqwe>only for you</qweqwe></server:allow>
+</server:content>
+</body>
+</html>
