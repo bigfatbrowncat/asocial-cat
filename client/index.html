@@ -9,6 +9,7 @@
 
 
 <body>
+  <div id="state" style="opacity: 50%; font-family: sans-serif; font-size: 80%;">Disconnected</div>
   <div id="root">
     Loading...
     <noscript>JavaScript is required.</noscript>
@@ -35,32 +36,108 @@
       html
     }
 
-    var ws;
+    //var ws;
     //var messages;
 
+    async function sha256(message) {
+      // encode as UTF-8
+      const msgBuffer = new TextEncoder().encode(message);
+
+      // hash the message
+      const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+
+      // convert ArrayBuffer to Array
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+
+      // convert bytes to hex string
+      const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+      return hashHex;
+    }
+
     window.open_socket = function() {
-      ws = new WebSocket("ws://localhost:9002/echo");
-      ws.onmessage = function(evt) {
-        let msg = evt.data;
+      if (!window.ws || window.ws.readyState === WebSocket.CLOSED) {
+        let state_element = document.getElementById("state")
 
-        ReactDOM.render(
-            html`<${App} foo=${msg} />`,
-            document.getElementById("root")
-        );
+        window.ws = new WebSocket("ws://localhost:9002/echo");
 
+        window.ws.onmessage = function (evt) {
+          let jsmsg = JSON.parse(evt.data);
+          if ("modal_response" in jsmsg) {
+            let modal_response = jsmsg["modal_response"];
+            if ("response" in modal_response) {
+              let response = modal_response["response"];
+              if (response === "success") {
+                // Do nothing
+                console.info("Server responded success");
+              } else if (response === "invalid-request") {
+                throw "Invalid request";
+              } else if (response === "server-fail") {
+                throw "Server failure";
+              } else {
+                throw "Impossible case";
+              }
+            } else {
+              throw "Invalid response";
+            }
+          } else if ("content_response" in jsmsg) {
+            let content_response = jsmsg["content_response"];
+            if ("content" in content_response) {
+              let content = content_response["content"];
+              ReactDOM.render(
+                  html`
+                    <${App} foo=${content}/>`,
+                  document.getElementById("root")
+              );
+            }
+          }
+        };
 
-      };
-      ws.onopen = function(evt) {
-        ws.send("content");
+        window.ws.onopen = function (evt) {
+          state_element.innerText = "Connected";
+        }
+        window.ws.onclose = function (evt) {
+          state_element.innerText = "Disconnected";
+        }
+        window.ws.onerror = function (evt) {
+          state_element.innerText = "Error";
+        }
       }
     }
 
+    window.update_content = function () {
+      let get_content_request = {
+        "get_content_request": { }
+      }
+      ws.send(JSON.stringify(get_content_request));
+    }
+
+    window.login_user = function() {
+      let login = "user";
+      let password = "mycoolpassword1";
+      let salt = "thisisasocialcatsalt1985!!!";
+
+      sha256(password + salt).then(password_hash => {
+        let login_request = {
+          "login_request": {
+            "login": login,
+            "password_hash": password_hash
+          }
+        };
+        ws.send(JSON.stringify(login_request));
+      });
+    }
+
     window.close_socket = function() {
-      ws.close();
+      window.ws.close();
     }
 
   </script>
-  <div><button onclick="window.open_socket();">Open socket</button><button onclick="window.close_socket();">Close socket</button></div>
+  <div>
+    <button onclick="window.open_socket();">Open socket</button>
+    <button onclick="window.login_user();">Login user</button>
+    <button onclick="window.update_content();">Update content</button>
+    <button onclick="window.close_socket();">Close socket</button>
+  </div>
 
 </body>
 

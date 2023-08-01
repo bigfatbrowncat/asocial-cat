@@ -1,7 +1,14 @@
 #include "echo_handler.hpp"
 #include "string_tools.hpp"
+#include "crypto_tools.hpp"
 
 #include <pugixml.hpp>
+#include <rapidjson/rapidjson.h>
+#include <rapidjson/document.h>
+#include <rapidjson/error/en.h>
+#include <rapidjson/istreamwrapper.h>
+#include <rapidjson/ostreamwrapper.h>
+#include <rapidjson/writer.h>
 
 #include <iostream>
 #include <fstream>
@@ -9,34 +16,71 @@
 #include <list>
 #include <set>
 
+struct User {
+    std::string login;
+    std::string password_hash;
+};
 
-std::string content;
+struct ModalResponse {
+    enum Type { Success, InvalidRequest, ServerFail };
 
-// Define a callback to handle incoming messages
-void on_message(server* s, websocketpp::connection_hdl hdl, message_ptr msg) {
-    std::cout << "on_message called with hdl: " << hdl.lock().get()
-              << " and message: " << msg->get_payload()
-              << std::endl;
+    Type response;
 
-    // check for a special command to instruct the server to stop listening so
-    // it can be cleanly exited.
-    if (msg->get_payload() == "stop-listening") {
-        s->stop_listening();
-        return;
-    } else if (msg->get_payload() == "content") {
+    std::string toJSON() const {
+        rapidjson::Document doc;
+        doc.SetObject();
+        rapidjson::Value gv;
+        gv.SetObject();
 
-        // Sending the content
-        try {
-            //s->send(hdl, msg->get_payload(), msg->get_opcode());
-            s->send(hdl, content, websocketpp::frame::opcode::text);
-        } catch (websocketpp::exception const & e) {
-            std::cout << "Echo failed because: "
-                      << "(" << e.what() << ")" << std::endl;
+        if (response == Success) {
+            gv.AddMember("response", "success", doc.GetAllocator());
+        } else if (response == InvalidRequest) {
+            gv.AddMember("response", "invalid-request", doc.GetAllocator());
+        } else if (response == ServerFail) {
+            gv.AddMember("response", "server-fail", doc.GetAllocator());
+        } else {
+            throw std::logic_error("Impossible ModalResponse type");
         }
 
+        doc.AddMember("modal_response", gv, doc.GetAllocator());
+
+        //doc.PushBack(val, doc.GetAllocator());
+
+        std::stringstream sout;
+        rapidjson::OStreamWrapper out(sout);
+        rapidjson::Writer<rapidjson::OStreamWrapper> writer(out);
+        doc.Accept(writer);
+
+        return sout.str();
+    }
+};
+
+struct ContentResponse {
+    std::string content;
+
+    std::string toJSON() const {
+        rapidjson::Document doc;
+        doc.SetObject();
+        rapidjson::Value gv;
+        gv.SetObject();
+        gv.AddMember("content", rapidjson::StringRef(content.c_str()), doc.GetAllocator());
+
+        doc.AddMember("content_response", gv, doc.GetAllocator());
+
+        std::stringstream sout;
+        rapidjson::OStreamWrapper out(sout);
+        rapidjson::Writer<rapidjson::OStreamWrapper> writer(out);
+        doc.Accept(writer);
+
+        return sout.str();
     }
 
-}
+};
+
+std::map<std::string, User> usersMap;
+std::string activeUserLogin;
+
+
 
 bool has_parent_named(const pugi::xml_node& node, const std::string& name) {
     pugi::xml_node cur = node;
@@ -59,6 +103,16 @@ bool has_parent_named(const pugi::xml_node& node, const std::string& name) {
 //    }
 //    return false;
 //}
+
+class invalid_users_file_error : public std::runtime_error {
+public:
+    invalid_users_file_error(const char* desc) : std::runtime_error(desc) { }
+};
+
+class invalid_contents_file_error : public std::runtime_error {
+public:
+    invalid_contents_file_error(const char* desc) : std::runtime_error(desc) { }
+};
 
 class content_node_not_unique_exception : public std::exception {
 };
@@ -89,20 +143,19 @@ std::list<pugi::xml_node> find_server_nodes(pugi::xml_node node) {
     return walker.found_nodes;
 }
 
-
-int main() {
+std::string readContentForUser(const std::string& login) {
     // Loading the content file
     std::ifstream content_stream("data/content_ex.html");
     if (!content_stream) {
-        std::cerr << "Can't open the content file" << std::endl;
-        return 1;
+        throw invalid_contents_file_error("Can't open the content file");
     }
+
     pugi::xml_document doc;
     pugi::xml_parse_result res = doc.load(content_stream);
     if (!res) {
-        std::cerr << "Can't parse the content: " << res.description() << std::endl;
-        return 1;
+        throw invalid_contents_file_error((std::string("Can't parse the content: ") + res.description()).c_str());
     }
+
 
 //    pugi::xml_node cur = doc.root();
 //
@@ -153,6 +206,7 @@ int main() {
 //        }
 //    }
 
+
     // Extracting all the server nodes
     std::list<pugi::xml_node> server_nodes = find_server_nodes(doc.root());
 
@@ -170,7 +224,11 @@ int main() {
         }
     }
 
-    std::string user = "irene";
+    /*std::string user = "user";
+    std::string password = "mycoolpassword1";
+    std::string salt = "thisisasocialcatsalt1985!!!";
+    std::string password_hash = hash_to_hex(sha256_string(password + salt));
+    std::cout << password_hash << std::endl;*/
 
     while (!server_nodes.empty()) {
         // Processing the server nodes
@@ -189,7 +247,7 @@ int main() {
                 });
 
                 // Resolving the node
-                if (users.find(user) != users.end()) {
+                if (users.find(login) != users.end()) {
                     node.set_name("div");
                     node.remove_attribute("users");
                     // This node is resolved, removing it from the list
@@ -210,11 +268,85 @@ int main() {
         }
     }
 
-    std::cout << content_root.name() << "!!!!" << std::endl;
-
     std::ostringstream content_processed_stream;
     content_root.print(content_processed_stream);
-    content = content_processed_stream.str();
+    return content_processed_stream.str();
+}
+
+
+// Define a callback to handle incoming messages
+void on_message(server* s, websocketpp::connection_hdl hdl, message_ptr msg) {
+    std::cout << "on_message called with hdl: " << hdl.lock().get()
+              << " and message: " << msg->get_payload()
+              << std::endl;
+
+    rapidjson::Document doc;
+    std::string json = msg->get_payload();
+    rapidjson::ParseResult p = doc.Parse<0>(json.c_str());
+    if (!p) {
+        std::cerr << "Can't parse the request from client. " << rapidjson::GetParseError_En(p.Code()) << " at offset " << p.Offset() << std::endl;
+    }
+
+    if (doc.HasMember("login_request") && doc["login_request"].IsObject()) {
+        const auto& login_request = doc["login_request"];
+        if (login_request.HasMember("login") && login_request["login"].IsString() &&
+            login_request.HasMember("password_hash") && login_request["password_hash"].IsString()) {
+
+            const auto &login = login_request["login"].GetString();
+            const auto &password_hash = login_request["password_hash"].GetString();
+            std::cout << "login: " << login << ", password_hash: " << password_hash << std::endl;
+
+            if (usersMap.find(login) != usersMap.end()) {
+                if (usersMap[login].password_hash == password_hash) {
+                    std::cout << "Logged in as user " << login << std::endl;
+                    activeUserLogin = login;
+                    ModalResponse res;
+                    res.response = ModalResponse::Success;
+                    s->send(hdl, res.toJSON(), websocketpp::frame::opcode::text);
+                }
+            }
+
+        } else {
+            std::cerr << "Invalid login request" << std::endl;
+            ModalResponse res;
+            res.response = ModalResponse::InvalidRequest;
+            s->send(hdl, res.toJSON(), websocketpp::frame::opcode::text);
+        }
+    } else if (doc.HasMember("get_content_request") && doc["get_content_request"].IsObject()) {
+        const auto& get_content_request = doc["get_content_request"];
+        ContentResponse cnt;
+        cnt.content = readContentForUser(activeUserLogin);
+        s->send(hdl, cnt.toJSON(), websocketpp::frame::opcode::text);
+    }
+}
+
+int main() {
+
+    // Reading the users table
+    std::ifstream users_stream("data/users.json");
+    rapidjson::Document users_doc;
+    rapidjson::IStreamWrapper users_stream_wrapped(users_stream );
+    rapidjson::ParseResult rres = users_doc.ParseStream(users_stream_wrapped);
+    if (!rres) {
+        std::string err = std::string(rapidjson::GetParseError_En(rres.Code())) + " at offset " + std::to_string(rres.Offset());
+        throw invalid_users_file_error(err.c_str());
+    }
+
+    if (users_doc.HasMember("users") && users_doc["users"].IsArray()) {
+        auto& users = users_doc["users"];
+        // Reading the user credentials
+        for (rapidjson::Value::ConstValueIterator itr = users.Begin(); itr != users.End(); itr++) {
+            const auto user = itr->GetObj();//  GetObject();
+            User userObj;
+            if (user.HasMember("login") && user["login"].IsString()) {
+                userObj.login = user["login"].GetString();
+            }
+            if (user.HasMember("password_hash") && user["password_hash"].IsString()) {
+                userObj.password_hash = user["password_hash"].GetString();
+            }
+            usersMap.insert(std::make_pair<>(userObj.login, userObj));
+        }
+    }
 
     // Create a server endpoint
     server echo_server;
