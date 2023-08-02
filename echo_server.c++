@@ -1,6 +1,7 @@
 #include "echo_handler.hpp"
 #include "string_tools.hpp"
 #include "crypto_tools.hpp"
+#include "exceptions.h"
 
 #include <pugixml.hpp>
 #include <rapidjson/rapidjson.h>
@@ -103,25 +104,6 @@ bool has_parent_named(const pugi::xml_node& node, const std::string& name) {
 //    }
 //    return false;
 //}
-
-class invalid_users_file_error : public std::runtime_error {
-public:
-    invalid_users_file_error(const char* desc) : std::runtime_error(desc) { }
-};
-
-class invalid_contents_file_error : public std::runtime_error {
-public:
-    invalid_contents_file_error(const char* desc) : std::runtime_error(desc) { }
-};
-
-class content_node_not_unique_exception : public std::exception {
-};
-
-class server_node_outside_content_exception : public std::exception {
-};
-
-class unknown_server_node_exception : public std::exception {
-};
 
 std::list<pugi::xml_node> find_server_nodes(pugi::xml_node node) {
     struct content_node_finder : pugi::xml_tree_walker
@@ -263,6 +245,7 @@ void on_message(server* s, websocketpp::connection_hdl hdl, message_ptr msg) {
     }
 }
 
+/*
 int main() {
 
     // Reading the users table
@@ -319,3 +302,4 @@ int main() {
         std::cerr << "other exception" << std::endl;
     }
 }
+*/

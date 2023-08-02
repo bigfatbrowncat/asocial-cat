@@ -8,7 +8,7 @@ file (GLOB HEADER_FILES *.hpp)
 add_subdirectory(third_party/pugixml)
 add_subdirectory(third_party/rapidjson)
 
-add_executable(asocial-cat-server ${SOURCE_FILES} ${HEADER_FILES})
+add_executable(asocial-cat-server ${SOURCE_FILES} ${HEADER_FILES} main.cpp beast_server_base.h beast_server_base.cpp exceptions.h)
 add_dependencies(asocial-cat-server pugixml::static)
 target_link_libraries(asocial-cat-server ws2_32 wsock32 pugixml::static crypto)
 target_include_directories(asocial-cat-server PUBLIC
