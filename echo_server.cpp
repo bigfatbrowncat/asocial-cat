@@ -156,57 +156,6 @@ std::string readContentForUser(const std::string& login) {
         throw invalid_contents_file_error((std::string("Can't parse the content: ") + res.description()).c_str());
     }
 
-
-//    pugi::xml_node cur = doc.root();
-//
-//    bool back_to_root = false;
-//    pugi::xml_node content_node, found_content_node;
-//    std::ostringstream content_processed_stream;
-//    while (true) {
-//        std::cout << cur.name() << std::endl;
-//        if (std::string(cur.name()) == "server:content") {
-//            if (!content_node) {
-//                // Entering the content node
-//                content_node = cur;
-//                found_content_node = cur;
-//            } else {
-//                std::cerr << "There should be only one <server:content> node in a content unit" << std::endl;
-//                return 1;
-//            }
-//        }
-//
-//        if (!is_or_has_parent(cur, content_node)) {
-//            // Exiting the node
-//            content_node = pugi::xml_node();
-//        } else {
-//            // We are still inside the <server:content> node
-//        }
-//
-//        if (cur.first_child()) {
-//            cur = cur.first_child();
-//        } else if (cur.next_sibling()){
-//            cur = cur.next_sibling();
-//        } else {
-//            while (true) {
-//                if (cur.parent()) {
-//                    cur = cur.parent();
-//                } else {
-//                    back_to_root = true;
-//                    break;
-//                }
-//
-//                if (cur.next_sibling()) {
-//                    cur = cur.next_sibling();
-//                    break;
-//                }
-//            }
-//        }
-//        if (back_to_root) {
-//            break;
-//        }
-//    }
-
-
     // Extracting all the server nodes
     std::list<pugi::xml_node> server_nodes = find_server_nodes(doc.root());
 
@@ -223,12 +172,6 @@ std::string readContentForUser(const std::string& login) {
             throw server_node_outside_content_exception();
         }
     }
-
-    /*std::string user = "user";
-    std::string password = "mycoolpassword1";
-    std::string salt = "thisisasocialcatsalt1985!!!";
-    std::string password_hash = hash_to_hex(sha256_string(password + salt));
-    std::cout << password_hash << std::endl;*/
 
     while (!server_nodes.empty()) {
         // Processing the server nodes
