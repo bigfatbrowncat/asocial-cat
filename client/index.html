@@ -104,13 +104,6 @@
       }
     }
 
-    window.update_content = function () {
-      let get_content_request = {
-        "get_content_request": { }
-      }
-      ws.send(JSON.stringify(get_content_request));
-    }
-
     window.login_user = function() {
       let login = "user";
       let password = "mycoolpassword1";
@@ -135,7 +128,6 @@
   <div>
     <button onclick="window.open_socket();">Open socket</button>
     <button onclick="window.login_user();">Login user</button>
-    <button onclick="window.update_content();">Update content</button>
     <button onclick="window.close_socket();">Close socket</button>
   </div>
 

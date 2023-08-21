@@ -2,14 +2,11 @@
 #include "string_tools.hpp"
 #include "crypto_tools.hpp"
 #include "exceptions.h"
+#include "model.h"
 
+#include <boost/asio/execution_context.hpp>
+#include <mutex>
 #include <pugixml.hpp>
-#include <rapidjson/rapidjson.h>
-#include <rapidjson/document.h>
-#include <rapidjson/error/en.h>
-#include <rapidjson/istreamwrapper.h>
-#include <rapidjson/ostreamwrapper.h>
-#include <rapidjson/writer.h>
 
 #include <boost/asio/buffer.hpp>
 #include <boost/asio/io_context.hpp>
@@ -26,69 +23,7 @@
 namespace net = boost::asio;            // from <boost/asio.hpp>
 using tcp = boost::asio::ip::tcp;       // from <boost/asio/ip/tcp.hpp>
 
-
-
-struct User {
-    std::string login;
-    std::string password_hash;
-};
-
-struct ModalResponse {
-    enum Type { Success, InvalidRequest, ServerFail };
-
-    Type response;
-
-    std::string toJSON() const {
-        rapidjson::Document doc;
-        doc.SetObject();
-        rapidjson::Value gv;
-        gv.SetObject();
-
-        if (response == Success) {
-            gv.AddMember("response", "success", doc.GetAllocator());
-        } else if (response == InvalidRequest) {
-            gv.AddMember("response", "invalid-request", doc.GetAllocator());
-        } else if (response == ServerFail) {
-            gv.AddMember("response", "server-fail", doc.GetAllocator());
-        } else {
-            throw std::logic_error("Impossible ModalResponse type");
-        }
-
-        doc.AddMember("modal_response", gv, doc.GetAllocator());
-
-        //doc.PushBack(val, doc.GetAllocator());
-
-        std::stringstream sout;
-        rapidjson::OStreamWrapper out(sout);
-        rapidjson::Writer<rapidjson::OStreamWrapper> writer(out);
-        doc.Accept(writer);
-
-        return sout.str();
-    }
-};
-
-struct ContentResponse {
-    std::string content;
-
-    std::string toJSON() const {
-        rapidjson::Document doc;
-        doc.SetObject();
-        rapidjson::Value gv;
-        gv.SetObject();
-        gv.AddMember("content", rapidjson::StringRef(content.c_str()), doc.GetAllocator());
-
-        doc.AddMember("content_response", gv, doc.GetAllocator());
-
-        std::stringstream sout;
-        rapidjson::OStreamWrapper out(sout);
-        rapidjson::Writer<rapidjson::OStreamWrapper> writer(out);
-        doc.Accept(writer);
-
-        return sout.str();
-    }
-
-};
-
+std::atomic<bool> send_content;
 std::map<std::string, User> usersMap;
 
 std::list<pugi::xml_node> find_server_nodes(pugi::xml_node node) {
@@ -122,9 +57,9 @@ bool has_parent_named(const pugi::xml_node& node, const std::string& name) {
     return false;
 }
 
-std::string readContentForUser(const std::string& login) {
+std::string parseContentForUser(const std::string& filename, const std::string& login) {
     // Loading the content file
-    std::ifstream content_stream("data/content_ex.html");
+    std::ifstream content_stream(filename);
     if (!content_stream) {
         throw invalid_contents_file_error("Can't open the content file");
     }
@@ -199,44 +134,69 @@ std::string readContentForUser(const std::string& login) {
 class session : public session_base {
 private:
     std::string activeUserLogin;
+    std::shared_ptr<boost::asio::steady_timer> updateTimer;
+    std::mutex updateReceiveMutex;
+
 public:
-    explicit session(tcp::socket &&socket) : session_base(std::move(socket)) { }
+    explicit session(net::io_context &ioc, tcp::socket &&socket)
+            : session_base(ioc, std::move(socket)) {
+        updateTimer = std::make_shared<boost::asio::steady_timer>(this->ioc(), boost::asio::chrono::seconds(5));
+    }
 
-    void handle_text(std::string &text) override {
-//        this->write_text("Answer text: " + text);
-
-//        std::cout << "on_message called with hdl: " << hdl.lock().get()
-//                  << " and message: " << text
-//                  << std::endl;
-
-        rapidjson::Document doc;
-        std::string json = text;
-        rapidjson::ParseResult p = doc.Parse<0>(json.c_str());
-        if (!p) {
-            std::cerr << "Can't parse the request from client. " << rapidjson::GetParseError_En(p.Code()) << " at offset " << p.Offset() << std::endl;
+    ~session() {
+        std::lock_guard<std::mutex> lock(updateReceiveMutex);
+        if (updateTimer != nullptr) {
+            std::cout << "Cancelling the updating timer" << std::endl;
+            updateTimer->cancel();
         }
+    }
 
-        if (doc.HasMember("login_request") && doc["login_request"].IsObject()) {
-            const auto& login_request = doc["login_request"];
-            if (login_request.HasMember("login") && login_request["login"].IsString() &&
-                login_request.HasMember("password_hash") && login_request["password_hash"].IsString()) {
+    void send_contents() {
+        std::cout << "Sending the contents to " << activeUserLogin << "..." << std::endl;
+        ContentResponse cnt;
+        cnt.content = parseContentForUser("data/contents/000000.initial_page.en.html", activeUserLogin);
+        send_text(cnt.toJSON());
+    }
 
-                const auto &login = login_request["login"].GetString();
-                const auto &password_hash = login_request["password_hash"].GetString();
-                std::cout << "login: " << login << ", password_hash: " << password_hash << std::endl;
+    void update_timer_handler() {
+        std::lock_guard<std::mutex> lock(updateReceiveMutex);
+        std::cout << "Update timer handler called" << std::endl;
+        send_contents();
+        updateTimer->expires_after(boost::asio::chrono::seconds(5));
+        updateTimer->async_wait([this] (boost::system::error_code ec) {
+            if (!ec) {  // Non-zero code means that the timer is cancelled
+                update_timer_handler();
+            }
+        });
+    }
 
-                if (usersMap.find(login) != usersMap.end()) {
-                    if (usersMap[login].password_hash == password_hash) {
-                        std::cout << "Logged in as user " << login << std::endl;
-                        activeUserLogin = login;
-                        ModalResponse res;
-                        res.response = ModalResponse::Success;
+    void handle_connection_established() override {
+        update_timer_handler();
+    }
 
-                        this->send_text(res.toJSON());
-                        //s->send(hdl, res.toJSON(), websocketpp::frame::opcode::text);
-                    }
+    void handle_text_received(std::string &text) override {
+        std::lock_guard<std::mutex> lock(updateReceiveMutex);
+        ParsedClientMessage client_msg(text);
+
+        if (LoginRequest::canTryCreatingFrom(client_msg)) {
+            LoginRequest login_request(client_msg);
+
+            if (usersMap.find(login_request.getLogin()) != usersMap.end()) {
+                if (usersMap[login_request.getLogin()].password_hash == login_request.getPasswordHash()) {
+                    std::cout << "Logged in as user " << login_request.getLogin() << std::endl;
+                    activeUserLogin = login_request.getLogin();
+
+//                    ModalResponse res;
+//                    res.response = ModalResponse::Success;
+//                    this->send_text(res.toJSON());
+
+                    // Sending the contents
+                    send_contents();
+                } else {
+                    ModalResponse res;
+                    res.response = ModalResponse::InvalidCredentials;
+                    this->send_text(res.toJSON());
                 }
-
             } else {
                 std::cerr << "Invalid login request" << std::endl;
                 ModalResponse res;
@@ -245,15 +205,14 @@ public:
                 this->send_text(res.toJSON());
                 //s->send(hdl, res.toJSON(), websocketpp::frame::opcode::text);
             }
-        } else if (doc.HasMember("get_content_request") && doc["get_content_request"].IsObject()) {
+        } /*else if (doc.HasMember("get_content_request") && doc["get_content_request"].IsObject()) {
             const auto& get_content_request = doc["get_content_request"];
             ContentResponse cnt;
             cnt.content = readContentForUser(activeUserLogin);
 
             this->send_text(cnt.toJSON());
             //s->send(hdl, cnt.toJSON(), websocketpp::frame::opcode::text);
-        }
-
+        }*/
 
     }
 };
@@ -286,7 +245,6 @@ int main(int argc, char* argv[])
         }
     }
 
-
     // Check command line arguments.
     if (argc != 4)
     {
@@ -301,7 +259,8 @@ int main(int argc, char* argv[])
     auto const threads = std::max<int>(1, std::atoi(argv[3]));
 
     // The io_context is required for all I/O
-    net::io_context ioc{threads};
+
+    net::io_context ioc {threads };
 
     // Create and launch a listening port
     std::make_shared<listener<session>>(ioc, tcp::endpoint{address, port})->run();
@@ -309,12 +268,18 @@ int main(int argc, char* argv[])
     // Run the I/O service on the requested number of threads
     std::vector<std::thread> v;
     v.reserve(threads - 1);
-    for(auto i = threads - 1; i > 0; --i) {
+    for(auto i = threads; i > 0; --i) {
         v.emplace_back([&ioc] {
             ioc.run();
         });
     }
+
+    //sleep(10);
+    //send_content = true;
+    //ioc.post([&ioc] {  })
+    //sleep(100);
     ioc.run();
+
 
     return EXIT_SUCCESS;
 }

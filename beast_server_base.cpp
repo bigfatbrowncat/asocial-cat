@@ -31,44 +31,56 @@ void session_base::on_run() {
     // Accept the websocket handshake
     ws_.async_accept(
             beast::bind_front_handler(
-                    &session_base::on_accept,
+                    &session_base::connection_established,
                     shared_from_this()));
 }
 
-void session_base::on_accept(beast::error_code ec) {
+void session_base::connection_established(beast::error_code ec) {
     if (ec)
         return fail(ec, "accept");
 
-    // Read a message
-    do_read();
+    // Handle the connection
+    handle_connection_established();
+    //clear_sending_or_start_reading();
+    start_receiving();
 }
 
-void session_base::do_read() {
+void session_base::start_receiving() {
+    std::cout << "Receiving started..." << std::endl;
     // Read a message into our buffer
+    reading_buffer_.clear();
     ws_.async_read(
-            buffer_,
+            reading_buffer_,
             beast::bind_front_handler(
-                    &session_base::on_read,
+                    &session_base::reading_finished,
                     shared_from_this()));
 }
 
 void session_base::send_text(const std::string &text) {
-    buffer_.clear();
+    //if (!handler_ordered_sending) {
+//        handler_ordered_sending = true;
 
-    size_t n = buffer_copy(buffer_.prepare(text.size()), boost::asio::buffer(text));
-    buffer_.commit(n);
+    std::lock_guard<std::mutex> sendingLock(sendingMutex);
+    writing_buffer_.clear();
+
+    size_t n = buffer_copy(writing_buffer_.prepare(text.size()), boost::asio::buffer(text));
+    writing_buffer_.commit(n);
 
     ws_.text(true);
     ws_.async_write(
-            buffer_.data(),
+            writing_buffer_.data(),
             beast::bind_front_handler(
-                    &session_base::on_write,
+                    &session_base::writing_finished,
                     shared_from_this()));
 
+//    } else {
+//        throw std::logic_error("We are already sending!");
+//    }
 }
 
-void session_base::on_read(beast::error_code ec, std::size_t bytes_transferred) {
+void session_base::reading_finished(beast::error_code ec, std::size_t bytes_transferred) {
     boost::ignore_unused(bytes_transferred);
+    std::cout << "Receiving finished..." << std::endl;
 
     // This indicates that the session was closed
     if (ec == websocket::error::closed)
@@ -78,21 +90,24 @@ void session_base::on_read(beast::error_code ec, std::size_t bytes_transferred) 
         fail(ec, "read");
 
     if (ws_.got_text()) {
-        std::string s = boost::beast::buffers_to_string(buffer_.data());
-        handle_text(s);
+        std::string s = boost::beast::buffers_to_string(reading_buffer_.data());
+        handle_text_received(s);
+        //clear_sending_or_start_reading();
+        // Starting receiving the next
+        start_receiving();
     }
 
 }
 
-void session_base::on_write(beast::error_code ec, std::size_t bytes_transferred) {
+void session_base::writing_finished(beast::error_code ec, std::size_t bytes_transferred) {
     boost::ignore_unused(bytes_transferred);
 
-    if(ec)
+    if (ec)
         return fail(ec, "write");
 
     // Clear the buffer
-    buffer_.consume(buffer_.size());
+    writing_buffer_.consume(writing_buffer_.size());
 
     // Do another read
-    do_read();
+    //start_receiving();
 }

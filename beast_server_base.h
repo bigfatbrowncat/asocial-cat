@@ -29,30 +29,47 @@ void fail(beast::error_code ec, char const *what);
 
 // Echoes back all received WebSocket messages
 class session_base : public std::enable_shared_from_this<session_base> {
+    net::io_context &ioc_;
     websocket::stream<beast::tcp_stream> ws_;
-    beast::flat_buffer buffer_;
+    beast::flat_buffer writing_buffer_, reading_buffer_;
+    //bool handler_ordered_sending = false;
+    std::mutex sendingMutex;
 
 private:
     // Start the asynchronous operation
     void on_run();
 
-    void do_read();
+    void start_receiving();
 
-    void on_read(beast::error_code ec, std::size_t bytes_transferred);
+    void reading_finished(beast::error_code ec, std::size_t bytes_transferred);
 
-    void on_write(beast::error_code ec, std::size_t bytes_transferred);
+    void writing_finished(beast::error_code ec, std::size_t bytes_transferred);
+
+//    void clear_sending_or_start_reading() {
+//        if (handler_ordered_sending) {
+//            // Clearing the sending flag, no attempt to read
+//            handler_ordered_sending = false;
+//        } else {
+//            // Sent nothing, wait for the client
+//            start_receiving();
+//        }
+//    }
+
+protected:
+    net::io_context &ioc() { return ioc_; };
 
 public:
     // Get on the correct executor
     void run();
 
-    void on_accept(beast::error_code ec);
+    void connection_established(beast::error_code ec);
 
     // Take ownership of the socket
-    explicit session_base(tcp::socket &&socket)
-        : ws_(std::move(socket)) { }
+    explicit session_base(net::io_context &ioc, tcp::socket &&socket)
+        : ioc_(ioc), ws_(std::move(socket)) { }
 
-    virtual void handle_text(std::string &text) = 0;
+    virtual void handle_connection_established() = 0;
+    virtual void handle_text_received(std::string &text) = 0;
 
     void send_text(const std::string &text);
 };
@@ -66,7 +83,7 @@ class listener : public std::enable_shared_from_this<listener<S>> {
     tcp::acceptor acceptor_;
 
 public:
-    listener(net::io_context &ioc, tcp::endpoint endpoint)
+    listener(net::io_context &ioc, const tcp::endpoint& endpoint)
             : ioc_(ioc), acceptor_(ioc) {
         // Compile-time sanity check
         static_assert(std::is_base_of<session_base, S>::value,
@@ -124,7 +141,7 @@ private:
             fail(ec, "accept");
         } else {
             // Create the session and run it
-            std::make_shared<S>(std::move(socket))->run();
+            std::make_shared<S>(ioc_, std::move(socket))->run();
         }
 
         // Accept another connection
